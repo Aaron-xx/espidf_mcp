@@ -41,8 +41,8 @@ dev = [
 ]
 
 [project.scripts]
-esp-idf-mcp = "cli:main"
-esp-idf-mcp-python = "__main__:main"
+espidf-mcp = "cli:main"
+espidf-mcp-python = "__main__:main"
 
 [project.urls]
 Homepage = "https://github.com/your-org/espidf-mcp"

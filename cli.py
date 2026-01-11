@@ -8,7 +8,7 @@ import sys
 
 
 def main() -> None:
-    """Main entry point - called by esp-idf-mcp command.
+    """Main entry point - called by espidf-mcp command.
 
     This function:
         1. Parses command-line arguments

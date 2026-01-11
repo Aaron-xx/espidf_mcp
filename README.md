@@ -30,10 +30,10 @@ pip install -e .
 cd /path/to/esp32_project
 
 # 启动服务器（stdio 模式）
-esp-idf-mcp
+espidf-mcp
 
 # 启动服务器（HTTP 模式）
-esp-idf-mcp --http --port 8090
+espidf-mcp --http --port 8090
 ```
 
 **方式 2: Python 模块**
@@ -68,7 +68,7 @@ python -m espidf_mcp --http --port 8090
 {
   "mcpServers": {
     "espidf": {
-      "command": "esp-idf-mcp",
+      "command": "espidf-mcp",
       "cwd": "/path/to/esp32_project",
       "env": {
         "IDF_PATH": "/path/to/esp-idf"

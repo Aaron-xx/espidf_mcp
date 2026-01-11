@@ -7,7 +7,7 @@ JSON-RPC messages.
 
 Prerequisites:
 - ESP-IDF MCP server must be running on http://127.0.0.1:8090
-- Start with: esp-idf-mcp --http --port 8090 --host 127.0.0.1
+- Start with: espidf-mcp --http --port 8090 --host 127.0.0.1
 """
 
 from pathlib import Path
