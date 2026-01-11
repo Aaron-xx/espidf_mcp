@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "espidf": {
+      "command": "esp-idf-mcp",
+      "args": [],
+      "env": {
+        "IDF_PATH": "$HOME/esp/esp-idf"
+      }
+    },
+    "espidf-http": {
+      "command": "esp-idf-mcp",
+      "args": ["--http", "--port", "8090"],
+      "env": {
+        "IDF_PATH": "$HOME/esp/esp-idf"
+      }
+    }
+  }
+}

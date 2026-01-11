@@ -1,0 +1,9 @@
+include README.md
+include LICENSE
+include pyproject.toml
+recursive-include espidf_mcp *.py
+recursive-include examples *.json
+global-exclude __pycache__
+global-exclude *.py[cod]
+global-exclude .coverage
+global-exclude htmlcov
