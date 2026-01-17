@@ -742,7 +742,7 @@ class TestStateConsistency:
     def test_workflow_state_persists_after_build(self, mcp_client: MCPHttpClient):
         """Test that workflow state is updated after build operation"""
         # Get initial state
-        state_before = mcp_client.call_tool("esp_workflow_state")
+        _ = mcp_client.call_tool("esp_workflow_state")
 
         # Execute build (this should update workflow state)
         build_result = mcp_client.call_tool("esp_build")

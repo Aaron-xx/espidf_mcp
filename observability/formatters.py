@@ -288,7 +288,7 @@ class TableFormatter:
         col_widths = [20, 8, 13, 13, 20]
 
         # Header
-        lines = ["  ".join(col.ljust(w) for col, w in zip(columns, col_widths))]
+        lines = ["  ".join(col.ljust(w) for col, w in zip(columns, col_widths, strict=True))]
         lines.append("-" * sum(col_widths) + "-" * (len(col_widths) - 1) * 2)
 
         # Rows
@@ -301,7 +301,7 @@ class TableFormatter:
                 tool_stats.get("last_called", "N/A")[: col_widths[4]],
             ]
 
-            row = "  ".join(cell.ljust(w) for cell, w in zip(cells, col_widths))
+            row = "  ".join(cell.ljust(w) for cell, w in zip(cells, col_widths, strict=True))
             lines.append(row)
 
         return "\n".join(lines)
@@ -322,7 +322,7 @@ class TableFormatter:
         col_widths = [15, 12, 12, 20]
 
         # Header
-        lines = ["  ".join(col.ljust(w) for col, w in zip(columns, col_widths))]
+        lines = ["  ".join(col.ljust(w) for col, w in zip(columns, col_widths, strict=True))]
         lines.append("-" * sum(col_widths) + "-" * (len(col_widths) - 1) * 2)
 
         # Rows
@@ -334,7 +334,7 @@ class TableFormatter:
                 stage.get("last_run", "N/A")[: col_widths[3]],
             ]
 
-            row = "  ".join(cell.ljust(w) for cell, w in zip(cells, col_widths))
+            row = "  ".join(cell.ljust(w) for cell, w in zip(cells, col_widths, strict=True))
             lines.append(row)
 
         return "\n".join(lines)
@@ -355,7 +355,7 @@ class TableFormatter:
         col_widths = [20, 15, 25, 10]
 
         # Header
-        lines = ["  ".join(col.ljust(w) for col, w in zip(columns, col_widths))]
+        lines = ["  ".join(col.ljust(w) for col, w in zip(columns, col_widths, strict=True))]
         lines.append("-" * sum(col_widths) + "-" * (len(col_widths) - 1) * 2)
 
         # Rows
@@ -376,7 +376,7 @@ class TableFormatter:
                 error.get("severity", "unknown")[: col_widths[3]],
             ]
 
-            row = "  ".join(cell.ljust(w) for cell, w in zip(cells, col_widths))
+            row = "  ".join(cell.ljust(w) for cell, w in zip(cells, col_widths, strict=True))
             lines.append(row)
 
         return "\n".join(lines)

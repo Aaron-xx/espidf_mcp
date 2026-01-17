@@ -282,7 +282,7 @@ class MetricsCollector:
         """
         with self._lock:
             # Get all unique tool names
-            tool_names = set(e.tool_name for e in self._tool_executions)
+            tool_names = {e.tool_name for e in self._tool_executions}
 
             return {tool_name: self.get_tool_stats(tool_name) for tool_name in tool_names}
 
@@ -305,7 +305,7 @@ class MetricsCollector:
             bottlenecks = []
 
             # Get all tool names
-            tool_names = set(e.tool_name for e in self._tool_executions)
+            tool_names = {e.tool_name for e in self._tool_executions}
 
             for tool_name in tool_names:
                 # Get all executions for this tool
@@ -351,7 +351,7 @@ class MetricsCollector:
         with self._lock:
             summary = {}
 
-            for tool_name in set(e.tool_name for e in self._tool_executions):
+            for tool_name in {e.tool_name for e in self._tool_executions}:
                 tool_executions = [e for e in self._tool_executions if e.tool_name == tool_name]
 
                 failures = [e for e in tool_executions if not e.success]
@@ -484,7 +484,7 @@ class MetricsCollector:
 
 
 @contextmanager
-def PerformanceTimer(metrics: MetricsCollector, operation: str, record_on_success: bool = True):
+def performance_timer(metrics: MetricsCollector, operation: str, record_on_success: bool = True):
     """Context manager for timing code blocks.
 
     Automatically records execution time to metrics collector.
@@ -495,12 +495,12 @@ def PerformanceTimer(metrics: MetricsCollector, operation: str, record_on_succes
         record_on_success: Only record if no exception occurs.
 
     Example:
-        with PerformanceTimer(metrics, "esp_build"):
+        with performance_timer(metrics, "esp_build"):
             result = subprocess.run(["idf.py", "build"])
         # Execution time automatically recorded
 
     Yields:
-        PerformanceTimer instance with `duration` attribute.
+        TimerResult instance with `duration` attribute.
     """
     start_time = time.time()
     exception_occurred = False

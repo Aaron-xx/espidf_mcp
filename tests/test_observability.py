@@ -468,7 +468,7 @@ class TestObservabilityIntegration:
             # Get components
             logger = get_logger("test", project_root / "logs")
             metrics = get_metrics(project_root)
-            diagnostics = get_diagnostics()
+            _ = get_diagnostics()
 
             # Simulate tool execution
             duration = 1.5

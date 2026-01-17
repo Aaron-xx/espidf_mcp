@@ -100,7 +100,6 @@ def atomic_append(filepath: Path, content: str, encoding: str = "utf-8") -> None
     lock_path = filepath.parent / f".{file_hash}.lock"
 
     max_retries = 3
-    last_error = None
 
     for attempt in range(max_retries):
         try:
@@ -123,13 +122,12 @@ def atomic_append(filepath: Path, content: str, encoding: str = "utf-8") -> None
 
                 return  # Success
 
-        except Timeout as e:
-            last_error = e
+        except Timeout:
             if attempt < max_retries - 1:
                 # Exponential backoff: 0.1s, 0.2s, 0.4s
                 time.sleep(0.1 * (2**attempt))
         except Exception as e:
-            raise OSError(f"Failed to append to {filepath}: {e}")
+            raise OSError(f"Failed to append to {filepath}: {e}") from e
 
     # All retries exhausted
     raise OSError(f"Timeout acquiring lock for {filepath} after {max_retries} attempts")

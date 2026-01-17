@@ -83,7 +83,6 @@ def create_server(
     # Initialize observability system
     logger = None
     metrics = None
-    diagnostics = None
     formatter = None
 
     if enable_observability and OBSERVABILITY_AVAILABLE:

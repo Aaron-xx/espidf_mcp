@@ -465,7 +465,7 @@ class TestAdvancedWorkflowIntegration:
     def test_workflow_progress_tracking(self, mcp_client: MCPHttpClient):
         """Test that workflow progress is tracked correctly"""
         # Get initial state
-        initial_state = mcp_client.call_tool("esp_workflow_state")
+        _ = mcp_client.call_tool("esp_workflow_state")
 
         # Perform a build
         mcp_client.call_tool("esp_build")
@@ -515,7 +515,7 @@ class TestAdvancedWorkflowIntegration:
         import re
 
         # Get initial workflow state
-        initial_state = mcp_client.call_tool("esp_workflow_files")
+        _ = mcp_client.call_tool("esp_workflow_files")
 
         # Perform a build operation
         build_result = mcp_client.call_tool("esp_build")
