@@ -8,8 +8,10 @@ JSON-RPC messages.
 Prerequisites:
 - ESP-IDF MCP server must be running on http://127.0.0.1:8090
 - Start with: espidf-mcp --http --port 8090 --host 127.0.0.1
+- Requires ESP-IDF environment and idf.py command
 """
 
+import os
 from pathlib import Path
 from typing import Any
 
@@ -25,6 +27,11 @@ from tests.conftest import skip_on_known_errors
 TEST_PROJECT_DIR = Path("/data/esp32_test/hello_world")
 SERVER_URL = "http://127.0.0.1:8090"
 REQUEST_TIMEOUT = 300.0
+
+# Check if ESP-IDF environment is available
+IDF_AVAILABLE = os.environ.get("IDF_PATH") is not None or (
+    TEST_PROJECT_DIR.exists() and (TEST_PROJECT_DIR / "CMakeLists.txt").exists()
+)
 
 # ============================================================================
 # MCP HTTP Client Helper
@@ -132,6 +139,7 @@ def mcp_client():
 # ============================================================================
 
 
+@pytest.mark.espidf  # Requires ESP-IDF environment
 class TestMCPBasics:
     """Test basic MCP protocol functionality"""
 
