@@ -196,6 +196,7 @@ class TestMCPBasics:
             assert len(tool["description"]) > 0, f"Tool {tool['name']} has empty description"
 
 
+@pytest.mark.espidf
 class TestProjectInfo:
     """Test esp_project_info tool"""
 
@@ -248,6 +249,7 @@ class TestListPorts:
                 )
 
 
+@pytest.mark.espidf
 class TestClean:
     """Test esp_clean tool with level parameter"""
 
@@ -279,6 +281,7 @@ class TestClean:
         assert "clean" in result.lower() or "清理" in result.lower() or "full" in result.lower()
 
 
+@pytest.mark.espidf
 class TestSize:
     """Test esp_size tool"""
 
@@ -438,6 +441,7 @@ class TestReadMac:
         assert "port" not in required, "port should be optional with default"
 
 
+@pytest.mark.espidf
 class TestWorkflowState:
     """Test workflow state management tools"""
 
@@ -487,6 +491,7 @@ class TestWorkflowState:
             assert len(deps_match) > 0, "If deps present, should have dependency info"
 
 
+@pytest.mark.espidf
 class TestHelperTools:
     """Test UCAgent-style helper tools"""
 
@@ -531,6 +536,7 @@ class TestIDFExpert:
         assert "ESP-IDF" in result
 
 
+@pytest.mark.espidf
 class TestBuild:
     """Test esp_build tool (long-running operation)"""
 
@@ -545,6 +551,7 @@ class TestBuild:
         assert "build" in result.lower() or "构建" in result or "succeeded" in result.lower()
 
 
+@pytest.mark.espidf
 class TestWorkflowIntegration:
     """Test common workflows using multiple tools"""
 
@@ -744,6 +751,7 @@ class TestErrorHandling:
             assert "not found" in str(e).lower() or "unknown" in str(e).lower()
 
 
+@pytest.mark.espidf
 class TestStateConsistency:
     """Test state consistency across operations"""
 
