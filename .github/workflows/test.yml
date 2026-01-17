@@ -66,7 +66,7 @@ jobs:
         run: pip install ruff
 
       - name: Run lint check
-        run: ruff check . --ignore=E501,F821,UP037,B905,C401 --output-format=github
+        run: python -m ruff check . --ignore=E501,F821,UP037,B905,C401 --output-format=github
 
       - name: Run formatter check
-        run: ruff format --check .
+        run: python -m ruff format --check .
