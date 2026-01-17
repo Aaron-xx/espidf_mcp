@@ -1,0 +1,114 @@
+# ESP-IDF MCP Server - Workflow Configuration
+# YAML-driven stage definitions for ESP-IDF development workflow
+
+stages:
+  # Stage 1: Project initialization
+  - name: init
+    desc: "项目初始化和验证"
+    task:
+      - "验证 ESP-IDF 环境 (IDF_PATH)"
+      - "验证项目结构 (CMakeLists.txt)"
+      - "检查项目目录权限"
+    reference_files:
+      - "{PROJECT}/CMakeLists.txt"
+      - "{PROJECT}/sdkconfig"
+    output_files:
+      - "{PROJECT}/.espidf-mcp/stages/init/status.json"
+    checkers:
+      - name: project_structure
+        class: ProjectStructureChecker
+    metadata:
+      stage_type: "validation"
+
+  # Stage 2: Target configuration
+  - name: config
+    desc: "目标芯片配置"
+    depends_on: [init]
+    task:
+      - "设置目标芯片 (idf.py set-target)"
+      - "配置项目选项 (如需 menuconfig)"
+    reference_files:
+      - "{PROJECT}/sdkconfig"
+    output_files:
+      - "{PROJECT}/.espidf-mcp/stages/config/status.json"
+    checkers:
+      - name: target_config
+        class: TargetConfigChecker
+    metadata:
+      stage_type: "configuration"
+
+  # Stage 3: Build firmware
+  - name: build
+    desc: "编译固件"
+    depends_on: [config]
+    task:
+      - "清理之前的构建 (可选)"
+      - "运行 idf.py build"
+      - "验证构建产物"
+    reference_files:
+      - "{PROJECT}/build/flasher_args.json"
+    output_files:
+      - "{PROJECT}/build/*.bin"
+      - "{PROJECT}/build/*.elf"
+      - "{PROJECT}/.espidf-mcp/stages/build/status.json"
+    checkers:
+      - name: build_artifacts
+        class: BuildArtifactsChecker
+    metadata:
+      stage_type: "build"
+      timeout: 300  # 5 minutes
+
+  # Stage 4: Flash firmware
+  - name: flash
+    desc: "烧录固件到设备"
+    depends_on: [build]
+    task:
+      - "检测连接的 ESP32 设备"
+      - "烧录固件 (idf.py flash)"
+      - "验证烧录成功"
+    reference_files: []
+    output_files:
+      - "{PROJECT}/.espidf-mcp/stages/flash/status.json"
+    checkers:
+      - name: flash_success
+        class: FlashSuccessChecker
+    metadata:
+      stage_type: "flash"
+      requires_device: true
+      timeout: 120
+
+  # Stage 5: Monitor output
+  - name: monitor
+    desc: "监控设备输出"
+    depends_on: [flash]
+    task:
+      - "启动串口监控器"
+      - "验证设备启动日志"
+      - "检查运行时错误"
+    reference_files: []
+    output_files:
+      - "{PROJECT}/.espidf-mcp/stages/monitor/output.txt"
+    checkers:
+      - name: runtime_check
+        class: RuntimeChecker
+    metadata:
+      stage_type: "monitor"
+      requires_device: true
+      timeout: 60
+
+# Workflow settings
+workflow:
+  # Automatically run checkers after each stage
+  auto_validate: true
+
+  # Stop workflow if a checker fails
+  fail_on_error: true
+
+  # Save output to files
+  enable_file_state: true
+
+# Template variables (for future expansion)
+templates:
+  PROJECT: "."  # Current project directory
+  DUT: "."      # Device under test
+  OUT: ".espidf-mcp"  # Output directory

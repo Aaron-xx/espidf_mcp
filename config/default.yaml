@@ -1,0 +1,33 @@
+# ESP-IDF MCP Server - Default Configuration
+
+# Tool management settings
+tool:
+  # Tools to exclude (blacklist)
+  ignore_tools: []
+
+  # Tools to include (whitelist, empty means all available)
+  selected_tools: []
+
+  # Default timeout for tool execution (seconds)
+  timeout_default: 120
+
+# Workflow settings
+workflow:
+  # Automatically run checkers after each stage
+  auto_validate: true
+
+  # Stop workflow if a checker fails
+  fail_on_error: true
+
+  # Custom stage definitions (overrides defaults if provided)
+  stages: []
+
+# Server settings
+server:
+  host: 127.0.0.1
+  port: 8090
+  stateless_http: true
+
+# General settings
+debug: false
+log_level: INFO

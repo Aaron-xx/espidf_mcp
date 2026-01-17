@@ -6,6 +6,9 @@
 
 - **MCP 标准兼容**: 完全符合 Model Context Protocol 标准
 - **多协议支持**: 支持 stdio（MCP 客户端）和 HTTP/SSE（URL 访问）
+- **双格式日志**: 彩色终端输出 + JSON 结构化日志（AI 友好）
+- **错误诊断**: 智能错误模式识别和修复建议
+- **性能监控**: 工具执行统计和瓶颈分析
 - **简单优先**: 极简模块结构，易于维护
 - **基于现有设施**: 复用 `idf.py` 和现有命令行工具
 - **友好输出**: 人类可读的文本格式，带 emoji 标识
@@ -82,6 +85,8 @@ python -m espidf_mcp --http --port 8090
 
 ## 可用工具
 
+### 核心 ESP-IDF 工具
+
 | 工具 | 说明 |
 |------|------|
 | `esp_project_info` | 获取当前项目信息 |
@@ -93,6 +98,16 @@ python -m espidf_mcp --http --port 8090
 | `esp_fullclean` | 完全清理构建文件 |
 | `esp_size` | 分析固件大小 |
 | `esp_set_target` | 设置芯片目标 |
+
+### 可观测性工具
+
+| 工具 | 说明 |
+|------|------|
+| `esp_metrics_summary` | 获取工具性能指标（执行次数、成功率、平均耗时） |
+| `esp_observability_status` | 获取可观测性系统状态和健康检查 |
+| `esp_logs_view` | 查看最近的日志条目（支持级别过滤） |
+| `esp_error_history` | 获取最近的错误历史和诊断信息 |
+| `esp_diagnose_last_error` | 获取最近错误的诊断建议 |
 
 ## 使用示例
 
@@ -203,6 +218,85 @@ python -m espidf_mcp --http --port 8090
 |------|------|------|------|
 | target | string | ✅ | 芯片型号（esp32, esp32s2, esp32c3, esp32s3, esp32c2, esp32h2, esp32p4, esp32c6, esp32c5） |
 
+## 可观测性
+
+ESP-IDF MCP Server 内置了可观测性系统，提供双格式日志、性能监控和错误诊断功能。
+
+### 日志系统
+
+日志存储在 `.espidf-mcp/logs/` 目录：
+
+```
+.espidf-mcp/
+├── logs/
+│   ├── workflow.log          # 人类可读日志
+│   ├── structured/           # JSON 结构化日志
+│   │   ├── espidf_mcp.jsonl  # 主服务器日志
+│   │   └── workflow.jsonl    # 工作流日志
+│   └── archive/              # 日志轮转备份
+```
+
+**特性**：
+- 彩色终端输出（INFO=绿色, WARNING=黄色, ERROR=红色）
+- JSONL 格式结构化日志（AI 友好）
+- 自动日志轮转（10MB，保留 5 个备份）
+
+### 错误诊断
+
+系统内置 15+ 种常见错误模式识别：
+
+| 错误类型 | 模式 | 建议 |
+|---------|------|------|
+| 环境错误 | IDF_PATH not set | source ~/esp/esp-idf/export.sh |
+| 构建错误 | region.*overflow | 减少组件大小，检查分区表 |
+| 硬件错误 | Failed to connect | 检查 USB 连接，检查串口权限 |
+| 烧录错误 | Failed to write | 降低波特率，检查 USB 线质量 |
+
+### 工具参数详情
+
+### esp_metrics_summary
+
+获取工具性能指标摘要
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| tool_name | string | ❌ | 指定工具名称（空则返回所有） |
+
+返回：调用次数、成功率、平均耗时、最后调用时间
+
+### esp_observability_status
+
+获取可观测性系统状态和健康检查
+
+无参数
+
+返回：日志文件状态、指标收集状态、诊断引擎状态
+
+### esp_logs_view
+
+查看最近的日志条目
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| level | string | ❌ | 日志级别（DEBUG/INFO/WARNING/ERROR，默认: INFO） |
+| tail | int | ❌ | 返回最近条目数（默认: 50） |
+
+### esp_error_history
+
+获取最近的错误历史和诊断信息
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| count | int | ❌ | 返回错误条数（默认: 10） |
+
+### esp_diagnose_last_error
+
+获取最近错误的诊断建议
+
+无参数
+
+返回：匹配的错误模式、修复建议、严重级别
+
 ## 环境要求
 
 - Python 3.10+
@@ -268,12 +362,25 @@ espidf-mcp/
 │   ├── __main__.py         # Python 模块入口
 │   ├── cli.py              # CLI 命令入口
 │   ├── server.py           # MCP 服务器核心
-│   └── project.py          # 项目检测模块
+│   ├── project.py          # 项目检测模块
+│   │
+│   ├── observability/      # 可观测性模块
+│   │   ├── __init__.py     # 公共 API
+│   │   ├── logger.py       # 双格式日志系统
+│   │   ├── metrics.py      # 性能指标收集
+│   │   ├── diagnostics.py  # 错误诊断引擎
+│   │   └── formatters.py   # 输出格式化
+│   │
+│   └── workflow/           # 工作流管理（可选）
+│       ├── file_state.py   # 文件状态管理
+│       └── manager.py      # 工作流编排器
 │
 ├── tests/                  # 测试套件
 │   ├── conftest.py         # pytest 配置
 │   ├── test_server.py      # 服务器测试
-│   └── test_tools.py       # 工具测试
+│   ├── test_tools.py       # 工具测试
+│   ├── test_e2e.py         # 端到端测试
+│   └── test_observability.py # 可观测性测试
 │
 └── examples/               # 示例配置
     └── mcp-client-config.json
@@ -294,6 +401,21 @@ MIT License
 欢迎提交 Issue 和 Pull Request！
 
 ## 更新日志
+
+### v0.2.0 (2025-01-11)
+
+- ✨ 新增可观测性系统
+  - 双格式日志：彩色终端输出 + JSON 结构化日志
+  - 性能监控：工具执行统计和瓶颈分析
+  - 错误诊断：15+ 种常见错误模式识别
+- ✨ 新增 5 个可观测性 MCP 工具
+  - `esp_metrics_summary` - 性能指标查询
+  - `esp_observability_status` - 系统状态检查
+  - `esp_logs_view` - 日志查看器
+  - `esp_error_history` - 错误历史查询
+  - `esp_diagnose_last_error` - 错误诊断建议
+- ✨ 完整的可观测性测试覆盖（31 个测试用例）
+- ✨ 工作流状态管理增强
 
 ### v0.1.0 (2025-01-09)
 

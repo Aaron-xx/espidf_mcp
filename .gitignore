@@ -107,6 +107,9 @@ dmypy.json
 *.swo
 *~
 
+# ESP-IDF MCP Server runtime data
+.espidf-mcp/
+
 # OS
 .DS_Store
 Thumbs.db

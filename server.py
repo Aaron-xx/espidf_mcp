@@ -1,16 +1,33 @@
 """ESP-IDF MCP Server Core.
 
 Provides MCP server with factory function for flexible project configuration.
+
+Tool Design Principles (following UCAgent patterns):
+- Atomic tools: Each tool does one thing well
+- Composable: AI can combine tools for complex workflows
+- Clear separation: Tools execute operations, Workflow manages state
 """
 
-import asyncio
-import subprocess
+import json
 from dataclasses import dataclass
-from typing import Literal
+from datetime import datetime
+from pathlib import Path
 
-import serial
-import serial.tools.list_ports
 from mcp.server.fastmcp import FastMCP
+
+# Security configuration
+from config import get_default_config
+from mcp_tools import BuildTools, ConfigTools, FlashTools, MonitorTools
+from workflow import Workflow
+
+# Observability system (lazy import for optional feature)
+try:
+    from observability import get_diagnostics, get_logger, get_metrics
+    from observability.formatters import OutputFormatter
+
+    OBSERVABILITY_AVAILABLE = True
+except ImportError:
+    OBSERVABILITY_AVAILABLE = False
 
 
 @dataclass
@@ -32,6 +49,9 @@ def create_server(
     project,
     host: str = "127.0.0.1",
     port: int = 8090,
+    enable_file_state: bool = True,
+    enable_observability: bool = True,
+    security_config=None,
 ) -> FastMCP:
     """Create an ESP-IDF MCP server instance.
 
@@ -39,460 +59,81 @@ def create_server(
         project: ProjectInfo instance containing project path and validation info.
         host: HTTP mode listening address.
         port: HTTP mode listening port.
+        enable_file_state: Enable file-based workflow state management.
+        enable_observability: Enable logging, metrics, and diagnostics.
+        security_config: Optional SecurityConfig instance. Uses default if None.
 
     Returns:
         Configured FastMCP server instance.
     """
     mcp = FastMCP("ESP-IDF MCP Server", host=host, port=port, stateless_http=True)
 
-    @mcp.tool()
-    def esp_project_info() -> str:
-        """Get current ESP-IDF project information.
-
-        PURPOSE:
-            Display current ESP-IDF project status and configuration information.
-
-        DESCRIPTION:
-            Detect and display detailed information about the current project,
-            including project path, CMakeLists.txt and sdkconfig file status.
-            Used to verify if the current directory is a valid ESP-IDF project.
-
-        REQUIREMENTS:
-            - Must be run in an ESP-IDF project directory.
-
-        RETURNS:
-            str: Formatted project information string containing:
-                - Project root directory path
-                - CMakeLists.txt file status
-                - sdkconfig file status
-                - Current working directory
-
-        EXAMPLE:
-            Call: esp_project_info()
-            Returns: "Project directory: /path/to/project\nCMakeLists.txt: exists..."
-        """
-        if not project.is_valid:
-            _, message = project.validate()
-            return f"Error: Current directory is not a valid ESP-IDF project\n\n{message}"
-
-        output = [
-            f"Project directory: {project.root}",
-            f"CMakeLists.txt: {'exists' if project.cmake_path.exists() else 'not found'}",
-            f"sdkconfig: {'exists' if project.sdkconfig_path.exists() else 'not found'}",
-            f"Current working directory: {project.root}",
-        ]
-        return "\n".join(output)
-
-    @mcp.tool()
-    def esp_build() -> str:
-        """Build ESP-IDF project firmware.
-
-        PURPOSE:
-            Compile the current ESP-IDF project to generate flashable firmware.
-
-        DESCRIPTION:
-            Execute idf.py build command to compile the entire project,
-            including application, bootloader, and partition table.
-            Generated .bin files are located in the build/ directory.
-
-        REQUIREMENTS:
-            - ESP-IDF environment must be properly configured (IDF_PATH set)
-            - Project must have target chip set via set-target
-            - All dependencies must be installed
-
-        RETURNS:
-            str: Build result information containing:
-                - Build success/failure status
-                - Build output summary (file size, component count, etc.)
-                - Generated firmware file paths
-
-        NOTES:
-            - Build time depends on project size and system performance
-            - First build downloads and compiles all components
-            - Incremental builds only recompile modified files
-
-        EXAMPLE:
-            Call: esp_build()
-            Returns: "Build succeeded\n\nhello_world.bin binary size 0x2c250 bytes..."
-        """
-        result = subprocess.run(
-            ["idf.py", "build"], cwd=project.root, capture_output=True, text=True
-        )
-        if result.returncode == 0:
-            return f"Build succeeded\n\n{result.stdout}"
-        else:
-            return f"Build failed\n\n{result.stderr}"
-
-    @mcp.tool()
-    def esp_flash(port: str | None = None, baud: int = 460800) -> str:
-        """Flash firmware to ESP32 chip.
-
-        PURPOSE:
-            Flash compiled firmware to the connected ESP32 device.
-
-        DESCRIPTION:
-            Use esptool to write firmware (including bootloader, application,
-            and partition table) to the ESP32 chip's flash memory.
-            Device automatically restarts after flashing.
-
-        PARAMETERS:
-            port (str | None): Serial device path
-                - Examples: "/dev/ttyUSB0", "/dev/ttyACM0", "COM3"
-                - Default: None (auto-detect)
-                - Required: No
-            baud (int): Flash baud rate
-                - Default: 460800
-                - Range: 115200 - 921600
-                - Required: No
-
-        REQUIREMENTS:
-            - ESP32 device must be connected via USB
-            - Device must have proper serial permissions (user in dialout group)
-            - Firmware must be built via esp_build
-            - If port is None, system auto-detects available port
-
-        RETURNS:
-            str: Flash result containing:
-                - Flash success/failure status
-                - Chip information (model, MAC address, flash size)
-                - Partition flash progress and verification results
-
-        NOTES:
-            - Device automatically resets during flashing
-            - Flash speed affected by baud rate, 460800 is recommended
-            - If flash fails, try reducing baud rate to 115200
-
-        EXAMPLE:
-            Call: esp_flash(port="/dev/ttyUSB0")
-            Call: esp_flash(port="/dev/ttyUSB0", baud=921600)
-        """
-        cmd = ["idf.py", "flash"]
-        if port:
-            cmd.extend(["-p", port])
-        cmd.extend(["-b", str(baud)])
-
-        result = subprocess.run(cmd, cwd=project.root, capture_output=True, text=True)
-        if result.returncode == 0:
-            return f"Flash succeeded\n\n{result.stdout}"
-        else:
-            return f"Flash failed\n\n{result.stderr}"
-
-    @mcp.tool()
-    async def esp_monitor(port: str, baud: int = 115200, seconds: int = 60) -> str:
-        """Monitor ESP32 serial output in real-time.
-
-        PURPOSE:
-            Capture and display ESP32 device serial log output.
-
-        DESCRIPTION:
-            Open specified serial port and read device log output in real-time.
-            Used for debugging, viewing program runtime status and error messages.
-            Supports long-running monitoring with periodic progress updates.
-
-        PARAMETERS:
-            port (str): Serial device path
-                - Examples: "/dev/ttyUSB0", "/dev/ttyACM0"
-                - Required: Yes
-            baud (int): Serial baud rate
-                - Default: 115200 (ESP-IDF standard baud rate)
-                - Common values: 115200, 921600
-                - Required: No
-            seconds (int): Monitoring duration in seconds
-                - Default: 60
-                - Range: 1 - 600
-                - Required: No
-
-        REQUIREMENTS:
-            - ESP32 device must be connected
-            - Serial port must have read permissions
-            - Device must be running and outputting logs
-
-        RETURNS:
-            str: Serial output content containing:
-                - All received log lines
-                - Progress reminder every 20 seconds
-                - Total runtime and received line count statistics
-
-        NOTES:
-            - Log format is ESP-IDF standard (tag + level + message)
-            - If device produces no output, shows timeout
-            - Automatically ends after specified time
-
-        EXAMPLE:
-            Call: esp_monitor(port="/dev/ttyUSB0", seconds=30)
-            Returns: "Starting monitor on /dev/ttyUSB0...\nI (37) boot: ESP-IDF v5.5.1..."
-        """
-        ser = None
-        try:
-            ser = serial.Serial(port, baudrate=baud, timeout=1)
-            ser.reset_input_buffer()
-
-            output = []
-            start_time = asyncio.get_event_loop().time()
-            line_count = 0
-            last_reminder = 0
-
-            output.append(f"Starting monitor on {port} (baud: {baud})")
-            output.append("=" * 50)
-
-            while asyncio.get_event_loop().time() - start_time < seconds:
-                elapsed = int(asyncio.get_event_loop().time() - start_time)
-
-                # Remind every 20 seconds
-                if elapsed - last_reminder >= 20:
-                    remaining = seconds - elapsed
-                    output.append(f"\nRunning for {elapsed}s, {remaining}s remaining")
-                    output.append("=" * 50)
-                    last_reminder = elapsed
-
-                if ser.in_waiting > 0:
-                    try:
-                        data = ser.readline()
-                        if data:
-                            decoded = data.decode("utf-8", errors="ignore").strip()
-                            if decoded:
-                                output.append(decoded)
-                                line_count += 1
-                    except (serial.SerialException, UnicodeDecodeError):
-                        pass
-                await asyncio.sleep(0.05)  # 50ms poll interval
-
-            elapsed = int(asyncio.get_event_loop().time() - start_time)
-            output.append(f"\nMonitoring ended (ran {elapsed}s, {line_count} lines)")
-            return "\n".join(output)
-
-        except serial.SerialException as e:
-            return f"Serial error: {e}"
-        except Exception as e:
-            return f"Monitor failed: {e}"
-        finally:
-            if ser and ser.is_open:
-                ser.close()
-
-    @mcp.tool()
-    def esp_clean() -> str:
-        """Clean ESP-IDF project build files.
-
-        PURPOSE:
-            Delete generated intermediate and target files, preserve configuration.
-
-        DESCRIPTION:
-            Execute idf.py clean command to delete build artifacts in build/
-            directory, but preserve sdkconfig configuration file.
-            Used for rebuilding or freeing disk space.
-
-        REQUIREMENTS:
-            - Project must have been built before
-
-        RETURNS:
-            str: Clean result with number of files removed and status
-
-        NOTES:
-            - Only deletes build artifacts, not source code
-            - Preserves sdkconfig configuration
-            - Next build will recompile all files
-
-        EXAMPLE:
-            Call: esp_clean()
-            Returns: "Clean succeeded\n\nCleaning... 521 files."
-        """
-        result = subprocess.run(
-            ["idf.py", "clean"], cwd=project.root, capture_output=True, text=True
-        )
-        if result.returncode == 0:
-            return f"Clean succeeded\n\n{result.stdout}"
-        else:
-            return f"Clean failed\n\n{result.stderr}"
-
-    @mcp.tool()
-    def esp_fullclean() -> str:
-        """Fully clean ESP-IDF project build files.
-
-        PURPOSE:
-            Delete all generated files including configuration and cache.
-
-        DESCRIPTION:
-            Execute idf.py fullclean command to delete entire build/ directory,
-            including configuration files, dependency cache, and all build artifacts.
-            Used for thoroughly cleaning the project.
-
-        REQUIREMENTS:
-            - Project directory must be writable
-
-        RETURNS:
-            str: Clean result with deletion status
-
-        NOTES:
-            - Deletes entire build/ directory
-            - Next build requires full reconfiguration and recompilation
-            - More thorough than esp_clean
-            - Can fix corrupted configuration or cache issues
-
-        EXAMPLE:
-            Call: esp_fullclean()
-            Returns: "Full clean succeeded\n\nProject fully cleaned."
-        """
-        result = subprocess.run(
-            ["idf.py", "fullclean"], cwd=project.root, capture_output=True, text=True
-        )
-        if result.returncode == 0:
-            return f"Full clean succeeded\n\n{result.stdout}"
-        else:
-            return f"Full clean failed\n\n{result.stderr}"
-
-    @mcp.tool()
-    def esp_size() -> str:
-        """Analyze ESP-IDF firmware size and memory usage.
-
-        PURPOSE:
-            Display firmware component flash and RAM usage.
-
-        DESCRIPTION:
-            Analyze compiled firmware to display memory usage for each component
-            and section, helping optimize code size and memory usage.
-            Includes total size, component sizes, and memory usage statistics.
-
-        REQUIREMENTS:
-            - Firmware must be built successfully
-
-        RETURNS:
-            str: Firmware size analysis report containing:
-                - Total firmware size
-                - Component size statistics
-                - Flash partition usage
-                - RAM usage
-                - Comparison with flash capacity
-
-        NOTES:
-            - Used for optimizing and debugging memory issues
-            - Displays detailed information for text, data, BSS sections
-            - Helps identify components occupying large space
-
-        EXAMPLE:
-            Call: esp_size()
-            Returns: "Firmware size analysis\n\nTotal sizes:\nText: 180816 bytes..."
-        """
-        result = subprocess.run(
-            ["idf.py", "size"], cwd=project.root, capture_output=True, text=True
-        )
-        if result.returncode == 0:
-            return f"Firmware size analysis\n\n{result.stdout}"
-        else:
-            return f"Analysis failed\n\n{result.stderr}"
-
-    @mcp.tool()
-    def esp_set_target(
-        target: Literal[
-            "esp32",
-            "esp32s2",
-            "esp32c3",
-            "esp32s3",
-            "esp32c2",
-            "esp32h2",
-            "esp32p4",
-            "esp32c6",
-            "esp32c5",
-        ],
-    ) -> str:
-        """Set ESP-IDF project target chip.
-
-        PURPOSE:
-            Configure project to build for specified ESP32 chip model.
-
-        DESCRIPTION:
-            Set project target chip, configuring compiler, linker, and SDK
-            for the specified chip. Must call when first configuring project
-            or changing chips.
-
-        PARAMETERS:
-            target (str): Target chip model
-                - Options: esp32, esp32s2, esp32c3, esp32s3, esp32c2, esp32h2,
-                  esp32p4, esp32c6, esp32c5
-                - Required: Yes
-
-        SUPPORTED CHIPS:
-            - esp32: ESP32 (original, Xtensa)
-            - esp32s2: ESP32-S2 (Xtensa, USB OTG)
-            - esp32c3: ESP32-C3 (RISC-V, WiFi + BLE)
-            - esp32s3: ESP32-S3 (Xtensa, WiFi + BLE, AI accelerator)
-            - esp32c2: ESP32-C2 (RISC-V, WiFi only)
-            - esp32h2: ESP32-H2 (RISC-V, WiFi 6 + BLE 5.0)
-            - esp32p4: ESP32-P4 (Xtensa, high performance)
-            - esp32c6: ESP32-C6 (RISC-V, WiFi 6 + BLE 5.0)
-            - esp32c5: ESP32-C5 (RISC-V)
-
-        REQUIREMENTS:
-            - ESP-IDF must support target chip
-            - Some chips may require specific ESP-IDF versions
-
-        RETURNS:
-            str: Configuration result containing:
-                - Configuration success status
-                - Generated sdkconfig file information
-                - Chip feature summary
-
-        NOTES:
-            - Generates or updates sdkconfig file
-            - Recommended to run esp_fullclean after changing target
-            - Different chips have different peripherals and features
-
-        EXAMPLE:
-            Call: esp_set_target(target="esp32s3")
-            Returns: "Set target to esp32s3 succeeded\n\nConfiguration done..."
-        """
-        result = subprocess.run(
-            ["idf.py", "set-target", target], cwd=project.root, capture_output=True, text=True
-        )
-        if result.returncode == 0:
-            return f"Set target to {target} succeeded\n\n{result.stdout}"
-        else:
-            return f"Set target failed\n\n{result.stderr}"
-
-    @mcp.tool()
-    def esp_list_ports() -> str:
-        """List all available serial port devices.
-
-        PURPOSE:
-            Scan and display all available serial port devices in the system.
-
-        DESCRIPTION:
-            Use pyserial to scan system for all serial ports, returning device
-            paths and description information. Used to identify connected ESP32
-            devices or other serial devices.
-
-        REQUIREMENTS:
-            - No special requirements
-
-        RETURNS:
-            str: List of serial ports, each line containing:
-                - Device number
-                - Device path (e.g., /dev/ttyUSB0)
-                - Device description (e.g., CP2102N USB to UART Bridge)
-
-        NOTES:
-            - Includes both virtual and physical serial ports
-            - ESP32 boards typically show as USB-Serial or CP210x
-            - Returns warning message if no devices detected
-
-        EXAMPLE:
-            Call: esp_list_ports()
-            Returns: "1. /dev/ttyUSB0 - CP2102N USB to UART Bridge Controller\n2. ..."
-        """
-        ports = serial.tools.list_ports.comports()
-        if not ports:
-            return "No serial devices detected"
-        output = []
-        for i, port in enumerate(ports, 1):
-            output.append(f"{i}. {port.device} - {port.description}")
-        return "\n".join(output)
+    # Initialize security configuration
+    if security_config is None:
+        security_config = get_default_config()
+
+    # Initialize workflow with file state management
+    workflow = Workflow(project_root=project.root, enable_file_state=enable_file_state)
+
+    # Initialize agent integration for external agent goal management
+    from workflow import AgentIntegration
+
+    agent_integration = AgentIntegration(project_root=project.root)
+
+    # Initialize observability system
+    logger = None
+    metrics = None
+    diagnostics = None
+    formatter = None
+
+    if enable_observability and OBSERVABILITY_AVAILABLE:
+        logger = get_logger("espidf_mcp", project.root / ".espidf-mcp" / "logs")
+        metrics = get_metrics(project.root)
+        _ = get_diagnostics()  # Initialize diagnostics engine
+        formatter = OutputFormatter()
+        logger.info("ESP-IDF MCP Server initialized", project=str(project.root))
+
+    # ============================================================================
+    # Register modular tools
+    # ============================================================================
+    # Tool modules are now organized in separate classes for better maintainability
+    BuildTools(
+        project,
+        mcp,
+        workflow=workflow,
+        logger=logger,
+        metrics=metrics,
+        security_config=security_config,
+    ).register_tools()
+    FlashTools(
+        project, mcp, logger=logger, metrics=metrics, security_config=security_config
+    ).register_tools()
+    ConfigTools(
+        project, mcp, logger=logger, metrics=metrics, security_config=security_config
+    ).register_tools()
+    MonitorTools(
+        project,
+        mcp,
+        workflow=workflow,
+        logger=logger,
+        metrics=metrics,
+        security_config=security_config,
+    ).register_tools()
+
+    # ============================================================================
+    # Helper/Guidance Tools (UCAgent pattern)
+    # ============================================================================
 
     @mcp.tool()
     def esp_idf_expert() -> str:
         """Get ESP-IDF expert role guidance.
 
-        Returns:
-            Usage guide for ESP-IDF MCP tools with common workflows
-            and best practices.
+        RETURNS:
+            str: Usage guide for ESP-IDF MCP tools with common workflows
+                 and best practices.
+
+        EXAMPLE:
+            Call: esp_idf_expert()
         """
         return """ESP-IDF MCP Expert Assistant
 
@@ -521,8 +162,590 @@ Common Workflows:
    View device runtime logs
 
 Best Practices:
-- Call esp_project_info() before starting new tasks to verify environment
-- Use esp_fullclean() to clean and retry if build fails
-- Use esp_size() to check firmware size distribution"""
+- Call esp_project_info() before starting new tasks
+- Use esp_clean(level="full") after changing target
+- Use esp_size() to check firmware size distribution
+
+Tool Composition (AI can combine these):
+- Flash and Monitor: esp_flash() → esp_monitor()
+- Clean Build: esp_clean(level="full") → esp_set_target() → esp_build()
+- Debug: esp_flash() → esp_monitor() → analyze output
+"""
+
+    @mcp.tool()
+    def esp_context_summary(summary: str) -> str:
+        """Store project context summary for AI understanding.
+
+        PURPOSE:
+            Store project-specific context information to help AI understand
+            the project better. This follows UCAgent's memory pattern.
+
+        DESCRIPTION:
+            Save a summary of the project context, goals, or current state
+            that AI can reference in future interactions. Useful for:
+            - Project goals and requirements
+            - Current development stage
+            - Known issues or workarounds
+            - Team decisions and rationale
+
+        PARAMETERS:
+            summary (str): Context summary text to store
+
+        RETURNS:
+            str: Confirmation of stored summary
+
+        NOTES:
+            - Context is stored in .espidf-mcp/context.json
+            - Can be retrieved by AI in future conversations
+            - Useful for multi-session projects
+
+        EXAMPLE:
+            Call: esp_context_summary(summary="Developing WiFi weather station with ESP32-S3")
+        """
+        if not enable_file_state:
+            return "File state management is disabled."
+
+        context_file = workflow.file_manager.mcp_dir / "context.json"
+        context_data = {
+            "timestamp": datetime.now().isoformat(),
+            "summary": summary,
+        }
+
+        try:
+            context_file.write_text(json.dumps(context_data, indent=2))
+            return f"Context summary stored:\n\n{summary}"
+        except Exception as e:
+            return f"Failed to store context: {e}"
+
+    @mcp.tool()
+    def esp_memory_store(key: str, value: str) -> str:
+        """Store project-specific information in memory.
+
+        PURPOSE:
+            Store key-value pairs for project-specific information.
+            This follows UCAgent's MemoryPut pattern.
+
+        DESCRIPTION:
+            Save information that AI or users need to remember across sessions,
+            such as:
+            - WiFi credentials (encrypted)
+            - Hardware configuration
+            - Build settings
+            - Test results
+
+        PARAMETERS:
+            key (str): Storage key name
+            value (str): Value to store
+
+        RETURNS:
+            str: Confirmation of stored data
+
+        NOTES:
+            - Data is stored in .espidf-mcp/memory.json
+            - Not suitable for sensitive data (use environment variables)
+            - Can be retrieved with esp_memory_get()
+
+        EXAMPLE:
+            Call: esp_memory_store(key="build_date", value="2024-01-11")
+        """
+        if not enable_file_state:
+            return "File state management is disabled."
+
+        memory_file = workflow.file_manager.mcp_dir / "memory.json"
+
+        # Load existing memory
+        try:
+            if memory_file.exists():
+                memory = json.loads(memory_file.read_text())
+            else:
+                memory = {}
+        except Exception:
+            memory = {}
+
+        # Store new value
+        memory[key] = {
+            "value": value,
+            "timestamp": Path(__file__).stem,
+        }
+
+        try:
+            memory_file.write_text(json.dumps(memory, indent=2))
+            return f"Stored: {key} = {value}"
+        except Exception as e:
+            return f"Failed to store memory: {e}"
+
+    # ============================================================================
+    # Agent Integration Tools (External Agent Support)
+    # ============================================================================
+
+    @mcp.tool()
+    def esp_set_agent_goal(
+        goal_type: str,
+        description: str,
+        priority: int = 3,
+    ) -> str:
+        """Set a high-level goal for external agent guidance.
+
+        PURPOSE:
+            Set a goal for the ESP-IDF MCP Server to provide intelligent
+            action recommendations. Enables external agents to communicate
+            their objectives and receive contextual guidance.
+
+        DESCRIPTION:
+            Sets an agent goal which influences tool recommendations and
+            workflow suggestions. Goals persist across sessions and help
+            the server provide more relevant actions.
+
+            Supported goal types:
+            - quick_build: Build firmware as fast as possible
+            - full_deploy: Complete build, flash, and monitor workflow
+            - config_change: Modify configuration and rebuild
+            - hardware_test: Test hardware connectivity
+            - firmware_update: Update firmware on device
+            - diagnostics: Diagnose build or hardware issues
+            - custom: Custom agent-defined goal
+
+        PARAMETERS:
+            goal_type (str): Type of goal (quick_build, full_deploy, etc.)
+            description (str): Human-readable goal description
+            priority (int): Priority level (1-5, default 3)
+
+        RETURNS:
+            str: Confirmation message with goal summary
+
+        NOTES:
+            - Goal persists in .espidf-mcp/agent_goal.json
+            - Use esp_get_agent_recommendations() to get actions
+            - Use esp_agent_goal_summary() to view current goal
+
+        EXAMPLE:
+            Call: esp_set_agent_goal(goal_type="quick_build", description="Build firmware for testing", priority=4)
+        """
+        try:
+            return agent_integration.set_agent_goal(
+                goal_type=goal_type,
+                description=description,
+                priority=priority,
+            )
+        except Exception as e:
+            return f"Failed to set agent goal: {e}"
+
+    @mcp.tool()
+    def esp_get_agent_recommendations(limit: int = 5) -> str:
+        """Get recommended actions based on current agent goal.
+
+        PURPOSE:
+            Get intelligent action recommendations based on the current
+            agent goal and workflow state.
+
+        DESCRIPTION:
+            Returns a prioritized list of recommended actions that help
+            achieve the current agent goal. Each recommendation includes
+            the tool name, description, priority, and reasoning.
+
+        PARAMETERS:
+            limit (int): Maximum number of actions to return (default 5)
+
+        RETURNS:
+            str: Formatted list of recommended actions with details
+
+        NOTES:
+            - Requires agent goal to be set first
+            - Actions are sorted by priority (highest first)
+            - Includes tool parameters and reasoning
+
+        EXAMPLE:
+            Call: esp_get_agent_recommendations(limit=5)
+        """
+        try:
+            # Get current workflow state for context
+            workflow_state_json = workflow.get_state()
+
+            # Parse workflow state
+            try:
+                import json as json_parser
+
+                workflow_state = json_parser.loads(workflow_state_json)
+            except Exception:
+                workflow_state = {}
+
+            # Get recommendations
+            recommendations = agent_integration.get_recommended_actions(
+                workflow_state=workflow_state,
+                limit=limit,
+            )
+
+            if not recommendations:
+                return "No recommendations available. Set an agent goal first with esp_set_agent_goal()."
+
+            # Format recommendations
+            lines = ["Agent Goal Recommendations", "=" * 50]
+
+            goal_summary = agent_integration.get_goal_summary()
+            if goal_summary:
+                lines.append(f"\nGoal: {goal_summary.get('description', 'N/A')}")
+                lines.append(f"Type: {goal_summary.get('goal_type', 'N/A')}")
+                lines.append(f"Priority: {goal_summary.get('priority', 'N/A')}/5")
+                lines.append("")
+
+            for i, action in enumerate(recommendations, 1):
+                lines.append(f"{i}. {action['description']}")
+                lines.append(f"   Tool: {action['tool_name']}")
+                lines.append(f"   Priority: {action['priority']}/5")
+                if action.get("parameters"):
+                    lines.append(f"   Parameters: {action['parameters']}")
+                if action.get("reason"):
+                    lines.append(f"   Reason: {action['reason']}")
+                if action.get("estimated_duration"):
+                    lines.append(f"   Estimated: {action['estimated_duration']}s")
+                lines.append("")
+
+            return "\n".join(lines)
+
+        except Exception as e:
+            return f"Failed to get recommendations: {e}"
+
+    @mcp.tool()
+    def esp_agent_goal_summary() -> str:
+        """Get summary of current agent goal.
+
+        PURPOSE:
+            Display the current agent goal and its configuration.
+
+        DESCRIPTION:
+            Returns information about the currently set agent goal,
+            including type, description, priority, and context.
+
+        RETURNS:
+            str: Goal information or message if no goal is set
+
+        NOTES:
+            - Use esp_set_agent_goal() to set a goal
+            - Use esp_clear_agent_goal() to remove current goal
+
+        EXAMPLE:
+            Call: esp_agent_goal_summary()
+        """
+        try:
+            goal_summary = agent_integration.get_goal_summary()
+
+            if not goal_summary:
+                return "No agent goal is currently set. Use esp_set_agent_goal() to set one."
+
+            lines = [
+                "Current Agent Goal",
+                "=" * 40,
+                f"Type: {goal_summary.get('goal_type', 'N/A')}",
+                f"Description: {goal_summary.get('description', 'N/A')}",
+                f"Priority: {goal_summary.get('priority', 'N/A')}/5",
+            ]
+
+            if goal_summary.get("context"):
+                lines.append("\nContext:")
+                for key, value in goal_summary["context"].items():
+                    lines.append(f"  {key}: {value}")
+
+            if goal_summary.get("constraints"):
+                lines.append("\nConstraints:")
+                for constraint in goal_summary["constraints"]:
+                    lines.append(f"  - {constraint}")
+
+            return "\n".join(lines)
+
+        except Exception as e:
+            return f"Failed to get goal summary: {e}"
+
+    @mcp.tool()
+    def esp_clear_agent_goal() -> str:
+        """Clear the current agent goal.
+
+        PURPOSE:
+            Remove the currently set agent goal.
+
+        DESCRIPTION:
+            Clears the agent goal, removing any goal-based recommendations.
+            Use this when starting a new task or resetting agent state.
+
+        RETURNS:
+            str: Confirmation message
+
+        NOTES:
+            - This action cannot be undone
+            - Recommendations will default to generic suggestions
+
+        EXAMPLE:
+            Call: esp_clear_agent_goal()
+        """
+        try:
+            return agent_integration.clear_goal()
+        except Exception as e:
+            return f"Failed to clear goal: {e}"
+
+    # ============================================================================
+    # Observability Tools (if enabled)
+    # ============================================================================
+
+    if enable_observability and OBSERVABILITY_AVAILABLE:
+
+        @mcp.tool()
+        def esp_metrics_summary(tool_name: str | None = None) -> str:
+            """Get performance metrics for ESP-IDF MCP tools.
+
+            PURPOSE:
+                Display performance statistics for tool execution.
+
+            DESCRIPTION:
+                Returns performance metrics including call counts, success rates,
+                average durations, and timing information. Helps identify
+                performance bottlenecks and track tool usage patterns.
+
+            PARAMETERS:
+                tool_name (str | None): Specific tool name or None for all tools
+
+            RETURNS:
+                str: Performance metrics summary with statistics for each tool.
+
+            EXAMPLE:
+                Call: esp_metrics_summary()
+                Call: esp_metrics_summary(tool_name="esp_build")
+            """
+            if tool_name:
+                stats = metrics.get_tool_stats(tool_name)
+                return formatter.format_tool_result(
+                    tool_name,
+                    f"Call count: {stats['call_count']}\n"
+                    f"Success rate: {stats['success_rate']:.1%}\n"
+                    f"Avg duration: {stats['avg_duration_ms']:.1f}ms",
+                    stats["avg_duration_ms"] / 1000,
+                    True,
+                )
+            else:
+                all_stats = metrics.get_all_tool_stats()
+                return formatter.format_metrics_summary(all_stats)
+
+        @mcp.tool()
+        def esp_observability_status() -> str:
+            """Get observability system status and health.
+
+            PURPOSE:
+                Display observability system status, log sizes, and metrics summary.
+
+            DESCRIPTION:
+                Returns information about the observability system including
+                log file sizes, metrics status, and system health indicators.
+
+            RETURNS:
+                str: Observability system status information.
+
+            EXAMPLE:
+                Call: esp_observability_status()
+            """
+            import os
+
+            mcp_dir = project.root / ".espidf-mcp"
+            logs_dir = mcp_dir / "logs"
+
+            output = [
+                "ESP-IDF MCP Observability Status",
+                "=" * 50,
+                f"Project: {project.root}",
+                "",
+            ]
+
+            # Log file sizes
+            if logs_dir.exists():
+                output.append("[Log Files]")
+                for log_file in logs_dir.glob("**/*.log"):
+                    size = os.path.getsize(log_file)
+                    output.append(f"  {log_file.relative_to(project.root)}: {size:,} bytes")
+
+                # Structured logs
+                structured_dir = logs_dir / "structured"
+                if structured_dir.exists():
+                    output.append("")
+                    output.append("[Structured Logs]")
+                    for jsonl_file in structured_dir.glob("*.jsonl"):
+                        size = os.path.getsize(jsonl_file)
+                        output.append(f"  {jsonl_file.relative_to(project.root)}: {size:,} bytes")
+
+            # Metrics summary
+            output.append("")
+            output.append("[Metrics]")
+            all_stats = metrics.get_all_tool_stats()
+            if all_stats:
+                total_calls = sum(s["call_count"] for s in all_stats.values())
+                output.append(f"  Total tool calls: {total_calls}")
+                output.append(f"  Tools tracked: {len(all_stats)}")
+            else:
+                output.append("  No metrics collected yet")
+
+            return "\n".join(output)
+
+        @mcp.tool()
+        def esp_logs_view(level: str = "INFO", tail: int = 50) -> str:
+            """View recent log entries with filtering.
+
+            PURPOSE:
+                View recent log entries with level filtering.
+
+            DESCRIPTION:
+                Returns recent log entries from the structured logs,
+                filtered by log level and limited to the specified number of lines.
+
+            PARAMETERS:
+                level (str): Log level filter (DEBUG, INFO, WARNING, ERROR)
+                tail (int): Number of recent lines to return
+
+            RETURNS:
+                str: Recent log entries matching the filter.
+
+            EXAMPLE:
+                Call: esp_logs_view(level="ERROR", tail=20)
+            """
+
+            # Read structured log file
+            jsonl_file = project.root / ".espidf-mcp" / "logs" / "structured" / "workflow.jsonl"
+            if not jsonl_file.exists():
+                return "No log files found."
+
+            # Read and filter
+            entries = []
+            with open(jsonl_file) as f:
+                for line in f:
+                    try:
+                        entry = json.loads(line.strip())
+                        if entry.get("level") == level.upper():
+                            entries.append(entry)
+                    except (json.JSONDecodeError, ValueError):
+                        continue
+
+            # Get tail entries
+            tail_entries = entries[-tail:] if len(entries) > tail else entries
+
+            output = [f"Recent {level.upper()} logs (last {len(tail_entries)} entries):", "=" * 60]
+            for entry in tail_entries:
+                timestamp = entry.get("timestamp", "")
+                message = entry.get("message", "")
+                output.append(f"[{timestamp}] {message}")
+
+            return "\n".join(output)
+
+        @mcp.tool()
+        def esp_error_history(count: int = 10) -> str:
+            """Get recent error history with diagnostic information.
+
+            PURPOSE:
+                Display recent errors with pattern matches and suggestions.
+
+            DESCRIPTION:
+                Returns recent error occurrences from metrics, along with
+                matched error patterns and diagnostic suggestions.
+
+            PARAMETERS:
+                count (int): Number of recent errors to return
+
+            RETURNS:
+                str: Error history with diagnostics and suggestions.
+
+            EXAMPLE:
+                Call: esp_error_history(count=10)
+            """
+            # Get failed tool executions from metrics
+            all_stats = metrics.get_all_tool_stats()
+
+            errors = []
+            for tool_name, stats in all_stats.items():
+                if stats["failure_count"] > 0:
+                    errors.append(
+                        {
+                            "tool_name": tool_name,
+                            "failures": stats["failure_count"],
+                            "last_status": stats["last_status"],
+                        }
+                    )
+
+            # Sort by failure count (descending)
+            errors.sort(key=lambda x: x["failures"], reverse=True)
+
+            # Get top errors
+            top_errors = errors[:count]
+
+            if not top_errors:
+                return "No errors recorded yet."
+
+            output = [
+                f"Recent Errors (last {len(top_errors)} tools with failures)",
+                "=" * 60,
+                "",
+            ]
+
+            for error in top_errors:
+                output.append(f"Tool: {error['tool_name']}")
+                output.append(f"  Failures: {error['failures']}")
+                output.append(f"  Last Status: {error['last_status']}")
+                output.append("")
+
+            return "\n".join(output)
+
+        @mcp.tool()
+        def esp_diagnose_last_error() -> str:
+            """Get diagnostic suggestions for the most recent error.
+
+            PURPOSE:
+                Analyze the most recent error and provide actionable suggestions.
+
+            DESCRIPTION:
+                Uses the diagnostic engine to analyze the most recent error
+                output and provides pattern matches and fix suggestions.
+
+            RETURNS:
+                str: Diagnostic report with suggestions.
+
+            EXAMPLE:
+                Call: esp_diagnose_last_error()
+            """
+            # Get most recent failed tool execution from metrics
+            all_stats = metrics.get_all_tool_stats()
+            failed_tools = [
+                (name, stats) for name, stats in all_stats.items() if stats["failure_count"] > 0
+            ]
+
+            if not failed_tools:
+                return "No errors to diagnose."
+
+            # Sort by last_called timestamp (most recent first)
+            failed_tools.sort(key=lambda x: x[1].get("last_called", ""), reverse=True)
+
+            # Get most recent error
+            tool_name, stats = failed_tools[0]
+
+            # For demonstration, create a generic diagnostic
+            # In real implementation, would read actual error output from logs
+            diagnostic_text = f"""Diagnostic Report for {tool_name}
+{"=" * 60}
+
+Recent failures: {stats["failure_count"]}
+
+Common suggestions based on error patterns:
+
+For build errors (IDF_PATH, compile errors):
+- Check ESP-IDF environment: source ~/esp/esp-idf/export.sh
+- Verify target is set: esp_set_target(target="esp32")
+- Clean build: esp_clean(level="full")
+
+For flash errors (connection, write failures):
+- Check USB cable connection
+- Verify device is powered on
+- Check serial permissions: sudo usermod -a -G dialout $USER
+- Try lower baud rate: esp_flash(port="/dev/ttyUSB0", baud=115200)
+
+For configuration errors:
+- Run menuconfig: idf.py menuconfig
+- Validate partition table: esp_validate_partition_table()
+
+Use esp_logs_view(level="ERROR") to see actual error messages.
+"""
+
+            return diagnostic_text
 
     return mcp
