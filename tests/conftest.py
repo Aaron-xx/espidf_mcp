@@ -61,6 +61,7 @@ def pytest_configure(config):
         ("integration", "marks tests as integration tests (require server)"),
         ("hardware", "marks tests that require real hardware"),
         ("flash", "marks tests that flash firmware (destructive)"),
+        ("espidf", "marks tests that require ESP-IDF environment and idf.py"),
     ]
     for marker, description in markers:
         config.addinivalue_line("markers", f"{marker}: {description}")
