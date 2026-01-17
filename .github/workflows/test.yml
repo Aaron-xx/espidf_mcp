@@ -62,8 +62,8 @@ jobs:
           python-version: "3.12"
           cache: "pip"
 
-      - name: Install ruff
-        run: pip install ruff
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
 
       - name: Run lint check
         run: python -m ruff check . --ignore=E501,F821,UP037,B905,C401 --output-format=github
