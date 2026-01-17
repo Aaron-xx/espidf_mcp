@@ -26,7 +26,7 @@ jobs:
 
       - name: Check code quality with ruff
         run: |
-          ruff check . --ignore=E501,F821,UP037,B905,C401
+          python -m ruff check . --ignore=E501,F821,UP037,B905,C401
 
       - name: Start MCP server in background
         run: |
