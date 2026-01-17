@@ -16,7 +16,7 @@ from typing import Any
 import httpx
 import pytest
 
-from test_helpers import skip_on_known_errors
+from tests.conftest import skip_on_known_errors
 
 # ============================================================================
 # Configuration
