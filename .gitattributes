@@ -1,0 +1,26 @@
+# Git attributes for espidf_mcp project
+
+# Force LF line endings on all files
+* text=auto eol=lf
+
+# Binary files (do not modify)
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.pyc binary
+*.so binary
+*.elf binary
+*.bin binary
+
+# Specific file types
+*.md text
+*.txt text
+*.py text
+*.yaml text
+*.yml text
+*.json text
+*.toml text
+*.sh text
